@@ -87,7 +87,7 @@ Architecture: ${ARCH}
 Installed-Size: ${INSTALLED_SIZE}
 Depends: python3 (>= 3.10)
 Maintainer: Uwe Benzelrath <16435589+uwebenzelrath@users.noreply.github.com>
-Homepage: https://github.com/uWiiiMiniCloud/LocalDarts
+Homepage: https://github.com/uWiiiDev/LocalDarts
 Description: LocalDarts - Lokales 3-Kamera Autodarts System
  Komplett lokales Steeldart-Erkennungssystem mit OpenCV Multi-Kamera-Triangulation,
  interaktiver 4-Punkt-Kalibrierung, 16 integrierten Dart-Spielen, 1 bis 6 Spielern

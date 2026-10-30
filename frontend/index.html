@@ -95,7 +95,11 @@
               <span data-i18n="current_visit">AKTUELLE AUFNAHME</span>
               <span id="edit-hint-badge" style="color: var(--accent-amber); margin-left: 0.4rem;" data-i18n="click_slot_to_edit">(Klicke einen Slot zum Korrigieren)</span>
             </span>
-            <div style="display: flex; gap: 0.45rem;">
+            <div style="display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap;">
+              <label style="font-size: 0.76rem; display: inline-flex; align-items: center; gap: 0.3rem; color: var(--accent); cursor: pointer; margin-right: 0.25rem;" title="Erkennt automatisch über die Kameras, wenn die Pfeile gezogen wurden, und schaltet zum nächsten Spieler weiter">
+                <input type="checkbox" id="chk-auto-takeout" checked />
+                <span data-i18n="lbl_auto_takeout">Auto-Takeout</span>
+              </label>
               <button id="btn-undo" class="btn btn-sm" data-i18n="btn_undo">↩️ Undo</button>
               <button id="btn-reset-bg" class="btn btn-sm" data-i18n="btn_empty_board">📷 Leeres Board</button>
               <button id="btn-next-player" class="btn btn-primary btn-sm" data-i18n="btn_next_player">👋 Pfeile gezogen / Weiter</button>

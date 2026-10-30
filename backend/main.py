@@ -105,6 +105,7 @@ detector = DartDetector(
     on_dart_detected=_on_vision_dart_detected,
     on_takeout_detected=_on_vision_takeout_detected,
     on_state_change=_on_vision_state_change,
+    is_turn_waiting_takeout=lambda: game_engine.waiting_for_takeout,
 )
 
 
@@ -171,6 +172,7 @@ class SaveCalibrationRequest(BaseModel):
 
 class DetectorSettingsRequest(BaseModel):
     enabled: Optional[bool] = None
+    auto_takeout_enabled: Optional[bool] = None
     diff_threshold: Optional[int] = None
     min_contour_area: Optional[int] = None
     settle_time_ms: Optional[int] = None
@@ -359,6 +361,7 @@ async def api_reset_calibration(cam_id: int):
 async def api_detector_settings(req: DetectorSettingsRequest):
     status = detector.update_settings(
         enabled=req.enabled,
+        auto_takeout_enabled=req.auto_takeout_enabled,
         diff_threshold=req.diff_threshold,
         min_contour_area=req.min_contour_area,
         settle_time_ms=req.settle_time_ms,

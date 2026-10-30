@@ -33,6 +33,7 @@ const I18N = {
     btn_undo: "↩️ Undo",
     btn_empty_board: "📷 Leeres Board",
     btn_next_player: "👋 Pfeile gezogen / Weiter",
+    lbl_auto_takeout: "Auto-Takeout (Automatischer Spielerwechsel)",
     visit_total: "Aufnahme",
     ready_word: "Bereit",
     click_field_prompt: "Feld anklicken...",
@@ -102,6 +103,7 @@ const I18N = {
     btn_undo: "↩️ Undo",
     btn_empty_board: "📷 Empty Board",
     btn_next_player: "👋 Takeout / Next Player",
+    lbl_auto_takeout: "Auto-Takeout (Auto Next Player)",
     visit_total: "Turn",
     ready_word: "Ready",
     click_field_prompt: "Click sector...",
@@ -171,6 +173,7 @@ const I18N = {
     btn_undo: "↩️ Annuler",
     btn_empty_board: "📷 Cible Vide",
     btn_next_player: "👋 Fléchettes retirées / Suivant",
+    lbl_auto_takeout: "Auto-Takeout (Joueur suivant auto)",
     visit_total: "Volée",
     ready_word: "Prêt",
     click_field_prompt: "Cliquez la cible...",
@@ -1365,6 +1368,17 @@ document.addEventListener("DOMContentLoaded", () => {
       updateTurnSlotsUI();
     });
   });
+
+  const chkTakeout = document.getElementById("chk-auto-takeout");
+  if (chkTakeout) {
+    chkTakeout.addEventListener("change", (ev) => {
+      fetch("/api/detector/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ auto_takeout_enabled: ev.target.checked }),
+      });
+    });
+  }
 
   document.getElementById("btn-undo").addEventListener("click", () => {
     fetch("/api/game/undo", { method: "POST" });

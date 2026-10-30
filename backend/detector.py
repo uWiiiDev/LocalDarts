@@ -1,5 +1,5 @@
 """
-OpenCV Diff-Tracking & Multi-Camera Triangulation Dart Detector for LocalDarts.
+OpenCV Diff-Tracking, Multi-Camera Triangulation & Automatic Takeout Detector for LocalDarts.
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ class DartDetector:
       1. Motion (flying dart / player hand)
       2. Settled new dart (frame diff between previous settled state and current settled state)
       3. Multi-camera ray intersection & endpoint clustering to find the exact dart tip (x, y)
-      4. Automatic Takeout detection when darts are pulled from the board
+      4. Automatic Takeout detection when darts are pulled from the board -> auto-advances player!
     """
 
     def __init__(
@@ -53,20 +53,24 @@ class DartDetector:
         on_dart_detected: Optional[Callable[[DartHit], None]] = None,
         on_takeout_detected: Optional[Callable[[], None]] = None,
         on_state_change: Optional[Callable[[str], None]] = None,
+        is_turn_waiting_takeout: Optional[Callable[[], bool]] = None,
     ):
         self.camera_manager = camera_manager
         self.calibration_manager = calibration_manager
         self.on_dart_detected = on_dart_detected
         self.on_takeout_detected = on_takeout_detected
         self.on_state_change = on_state_change
+        self.is_turn_waiting_takeout = is_turn_waiting_takeout
 
         # Tunable parameters
         self.enabled: bool = True
+        self.auto_takeout_enabled: bool = True
         self.diff_threshold: int = 26
         self.min_contour_area: int = 120
         self.max_contour_area: int = 28000
         self.settle_time_ms: int = 260
-        self.motion_threshold_px: int = 350
+        self.motion_threshold_px: int = 320
+        self.hand_takeout_motion_px: int = 2400
 
         # Internal state
         self.state: str = "READY"  # READY, MOTION, SETTLING, TAKEOUT
@@ -77,8 +81,11 @@ class DartDetector:
         self._last_diff_masks: Dict[int, np.ndarray] = {}
         self._last_candidates: Dict[int, CameraDartCandidate] = {}
         self._last_fused_hit: Optional[DartHit] = None
+        self._peak_diff_vs_empty: float = 0.0
 
         self._motion_active: bool = False
+        self._hand_motion_seen: bool = False
+        self._motion_frames_count: int = 0
         self._settled_since: float = time.monotonic()
         self._cooldown_until: float = 0.0
         self._lock = threading.Lock()
@@ -114,6 +121,9 @@ class DartDetector:
                 self._last_diff_masks[cid] = np.zeros_like(proc)
             self._last_candidates.clear()
             self.darts_in_board = 0
+            self._peak_diff_vs_empty = 0.0
+            self._hand_motion_seen = False
+            self._motion_frames_count = 0
             self._set_state("READY")
 
     def notify_board_cleared(self) -> None:
@@ -133,7 +143,7 @@ class DartDetector:
 
     def _vision_loop(self) -> None:
         while self._running:
-            time.sleep(0.06)  # ~16 Hz
+            time.sleep(0.045)  # ~22 Hz
             if not self.enabled:
                 continue
 
@@ -158,6 +168,9 @@ class DartDetector:
             # Check if motion is happening right now
             if total_motion_px > self.motion_threshold_px:
                 self._motion_active = True
+                self._motion_frames_count += 1
+                if total_motion_px > self.hand_takeout_motion_px or self._motion_frames_count >= 4:
+                    self._hand_motion_seen = True
                 self._settled_since = now
                 self._set_state("MOTION")
                 continue
@@ -169,42 +182,86 @@ class DartDetector:
                     continue
                 # Motion has settled! Evaluate board state:
                 self._motion_active = False
-                self._evaluate_settled_board(frames, current_grays)
+                hand_was_seen = self._hand_motion_seen
+                self._hand_motion_seen = False
+                self._motion_frames_count = 0
+                self._evaluate_settled_board(frames, current_grays, hand_was_seen=hand_was_seen)
+
+    def _measure_max_contour_vs_empty(self, current_grays: Dict[int, np.ndarray]) -> float:
+        """
+        Compute the average largest contour area when comparing current_grays against _empty_refs.
+        Using morphological opening + contour area (instead of raw pixel count) ignores camera
+        sensor noise and slight lighting drift while reliably measuring sticking darts.
+        """
+        kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+        max_areas: List[float] = []
+
+        for cid, gray in current_grays.items():
+            empty_ref = self._empty_refs.get(cid)
+            if empty_ref is None or empty_ref.shape != gray.shape:
+                continue
+            d_empty = cv2.absdiff(gray, empty_ref)
+            _, thresh = cv2.threshold(d_empty, self.diff_threshold, 255, cv2.THRESH_BINARY)
+            cleaned = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_open)
+            cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel_close)
+            contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            largest = max((cv2.contourArea(c) for c in contours), default=0.0)
+            max_areas.append(float(largest))
+
+        return (sum(max_areas) / len(max_areas)) if max_areas else 0.0
 
     def _evaluate_settled_board(
         self,
         frames: Dict[int, np.ndarray],
         current_grays: Dict[int, np.ndarray],
+        hand_was_seen: bool = False,
     ) -> None:
-        # 1. Check for Takeout if darts are currently in the board
-        if self.darts_in_board > 0:
-            diff_to_empty_total = 0
-            valid_cams = 0
-            for cid, gray in current_grays.items():
-                empty_ref = self._empty_refs.get(cid)
-                if empty_ref is not None and empty_ref.shape == gray.shape:
-                    d_empty = cv2.absdiff(gray, empty_ref)
-                    _, b_empty = cv2.threshold(d_empty, self.diff_threshold, 255, cv2.THRESH_BINARY)
-                    diff_to_empty_total += int(cv2.countNonZero(b_empty))
-                    valid_cams += 1
+        waiting_takeout = False
+        if self.is_turn_waiting_takeout:
+            try:
+                waiting_takeout = bool(self.is_turn_waiting_takeout())
+            except Exception:
+                waiting_takeout = False
 
-            # If the board looks almost identical to the empty reference again -> Takeout!
-            if valid_cams > 0 and (diff_to_empty_total / valid_cams) < (self.min_contour_area * 0.65):
+        # 1. Check for Automatic Takeout (Pfeile herausgezogen)
+        if self.auto_takeout_enabled and (self.darts_in_board > 0 or waiting_takeout):
+            current_vs_empty = self._measure_max_contour_vs_empty(current_grays)
+
+            # Case A: Board is back to clean/empty state (no dart-sized contour left vs empty_ref)
+            board_is_clean = current_vs_empty < (self.min_contour_area * 0.85)
+
+            # Case B: Significant drop (>55%) in sticking dart contour area compared to before takeout
+            darts_disappeared = (
+                self._peak_diff_vs_empty > self.min_contour_area
+                and current_vs_empty < (self._peak_diff_vs_empty * 0.45)
+            )
+
+            # Case C: Turn already complete (3 darts thrown / bust / checkout) and player's hand
+            # reached into the board and left, leaving fewer/no darts behind
+            turn_done_hand_takeout = (
+                (self.darts_in_board >= 3 or waiting_takeout)
+                and hand_was_seen
+                and (board_is_clean or darts_disappeared or current_vs_empty < self._peak_diff_vs_empty * 0.75)
+            )
+
+            if board_is_clean or darts_disappeared or turn_done_hand_takeout:
                 with self._lock:
                     for cid, gray in current_grays.items():
                         self._empty_refs[cid] = gray.copy()
                         self._prev_settled_refs[cid] = gray.copy()
                     self._last_candidates.clear()
                     self.darts_in_board = 0
+                    self._peak_diff_vs_empty = 0.0
                 self._set_state("TAKEOUT")
-                self._cooldown_until = time.monotonic() + 0.4
+                self._cooldown_until = time.monotonic() + 0.45
                 if self.on_takeout_detected:
                     self.on_takeout_detected()
                 self._set_state("READY")
                 return
 
         # 2. Check for a newly landed dart (diff against _prev_settled_refs)
-        if self.darts_in_board >= 3:
+        if self.darts_in_board >= 3 or waiting_takeout:
             self._set_state("READY")
             return
 
@@ -231,12 +288,14 @@ class DartDetector:
         # Fuse candidates across cameras to determine exact (x, y) dart tip on board
         hit = self._fuse_candidates(candidates)
         if hit is not None:
+            current_vs_empty = self._measure_max_contour_vs_empty(current_grays)
             with self._lock:
                 for cid, gray in current_grays.items():
                     self._prev_settled_refs[cid] = gray.copy()
                 self._last_candidates = candidates
                 self._last_fused_hit = hit
                 self.darts_in_board += 1
+                self._peak_diff_vs_empty = max(self._peak_diff_vs_empty, current_vs_empty)
             self._cooldown_until = time.monotonic() + 0.35
             self._set_state("READY")
             if self.on_dart_detected:
@@ -264,7 +323,6 @@ class DartDetector:
         if not contours:
             return None, cleaned
 
-        # Pick largest valid contour
         valid_contours = [
             c for c in contours
             if self.min_contour_area <= cv2.contourArea(c) <= self.max_contour_area
@@ -278,25 +336,19 @@ class DartDetector:
         if len(pts) < 5:
             return None, cleaned
 
-        # Fit principal axis line (vx, vy, x0, y0)
         line = cv2.fitLine(pts, cv2.DIST_L2, 0, 0.01, 0.01).flatten()
         vx, vy, x0, y0 = float(line[0]), float(line[1]), float(line[2]), float(line[3])
 
-        # Project all contour points onto the principal axis to find the two extreme ends
         projections = (pts[:, 0] - x0) * vx + (pts[:, 1] - y0) * vy
         min_idx = int(np.argmin(projections))
         max_idx = int(np.argmax(projections))
         end_a = (int(round(pts[min_idx, 0])), int(round(pts[min_idx, 1])))
         end_b = (int(round(pts[max_idx, 0])), int(round(pts[max_idx, 1])))
 
-        # Determine which end is the tip vs. the tail (flight) for single-camera fallback:
-        # Check contour thickness near end_a vs end_b (the flight is wider than the steel tip!)
-        # Also combine with camera mounting hint direction.
         span = float(projections[max_idx] - projections[min_idx])
         if span > 8.0:
             near_a = pts[projections <= projections[min_idx] + 0.25 * span]
             near_b = pts[projections >= projections[max_idx] - 0.25 * span]
-            # Perpendicular spread (width) at both ends
             perp_a = np.std(-(near_a[:, 0] - x0) * vy + (near_a[:, 1] - y0) * vx) if len(near_a) > 2 else 1.0
             perp_b = np.std(-(near_b[:, 0] - x0) * vy + (near_b[:, 1] - y0) * vx) if len(near_b) > 2 else 1.0
         else:
@@ -326,16 +378,6 @@ class DartDetector:
         )
 
     def _fuse_candidates(self, candidates: Dict[int, CameraDartCandidate]) -> Optional[DartHit]:
-        """
-        Fuse 1, 2, or 3 camera candidates into a single board coordinate (x, y).
-        When >= 2 cameras see the dart:
-          - For each camera, the dart lies along the segment between its two contour endpoints
-            (tip_board and tail_board).
-          - Because the true tip touches the board plane (z=0), its projected board coordinates
-            agree across all cameras, whereas the elevated flight projects to different board positions.
-          - We also compute pairwise line intersections and endpoint agreement to disambiguate
-            tip vs. tail with 100% geometric certainty.
-        """
         cam_list = list(candidates.values())
         n_cams = len(cam_list)
         if n_cams == 0:
@@ -346,19 +388,16 @@ class DartDetector:
             bx, by = c.tip_board
             return coords_to_hit(bx, by, confidence=0.78, cameras_used=1, source="camera")
 
-        # For each camera i, its two endpoints in board space are E_i0 = tip_board, E_i1 = tail_board.
-        # Find the choice of endpoints (one per camera) that minimizes total pairwise distance!
         endpoint_options = [[c.tip_board, c.tail_board] for c in cam_list]
         best_spread = float("inf")
         best_combo: List[Tuple[float, float]] = [c.tip_board for c in cam_list]
+        best_mask = 0
 
-        # Test all 2^n combinations (at most 2^3 = 8 combinations!)
         for mask in range(1 << n_cams):
             combo = []
             for idx in range(n_cams):
                 choice = (mask >> idx) & 1
                 combo.append(endpoint_options[idx][choice])
-            # Compute pairwise distances
             dist_sum = 0.0
             for i in range(n_cams):
                 for j in range(i + 1, n_cams):
@@ -368,13 +407,11 @@ class DartDetector:
                 best_combo = combo
                 best_mask = mask
 
-        # Update each candidate's tip/tail assignment if the multi-view geometry swapped them
         for idx, c in enumerate(cam_list):
             if ((best_mask >> idx) & 1) == 1:
                 c.tip_px, c.tail_px = c.tail_px, c.tip_px
                 c.tip_board, c.tail_board = c.tail_board, c.tip_board
 
-        # Also compute pairwise line intersections in board space for sub-pixel refinement
         intersections: List[Tuple[float, float]] = []
         for i in range(n_cams):
             for j in range(i + 1, n_cams):
@@ -385,7 +422,6 @@ class DartDetector:
                     cam_list[j].tail_board,
                 )
                 if pt_int is not None:
-                    # Only include intersection if it is reasonably close to the matched tip cluster
                     mean_tip_x = sum(p[0] for p in best_combo) / n_cams
                     mean_tip_y = sum(p[1] for p in best_combo) / n_cams
                     if math.hypot(pt_int[0] - mean_tip_x, pt_int[1] - mean_tip_y) < 0.08:
@@ -419,7 +455,6 @@ class DartDetector:
         return (px, py)
 
     def render_annotated_camera_frame(self, cam_id: int, show_spider: bool = True) -> np.ndarray:
-        """Return camera frame with optional calibration spider and detected dart tip overlay."""
         frame = self.camera_manager.get_frame(cam_id).copy()
         cal = self.calibration_manager.cameras.get(cam_id)
         if show_spider and cal is not None:
@@ -444,7 +479,6 @@ class DartDetector:
                 cv2.LINE_AA,
             )
 
-        # HUD badge
         status_col = (0, 230, 110) if self.state == "READY" else (0, 190, 255)
         cv2.putText(
             frame,
@@ -476,12 +510,15 @@ class DartDetector:
     def update_settings(
         self,
         enabled: Optional[bool] = None,
+        auto_takeout_enabled: Optional[bool] = None,
         diff_threshold: Optional[int] = None,
         min_contour_area: Optional[int] = None,
         settle_time_ms: Optional[int] = None,
     ) -> dict:
         if enabled is not None:
             self.enabled = bool(enabled)
+        if auto_takeout_enabled is not None:
+            self.auto_takeout_enabled = bool(auto_takeout_enabled)
         if diff_threshold is not None:
             self.diff_threshold = max(8, min(120, int(diff_threshold)))
         if min_contour_area is not None:
@@ -493,6 +530,7 @@ class DartDetector:
     def get_status(self) -> dict:
         return {
             "enabled": self.enabled,
+            "auto_takeout_enabled": self.auto_takeout_enabled,
             "state": self.state,
             "darts_in_board": self.darts_in_board,
             "diff_threshold": self.diff_threshold,

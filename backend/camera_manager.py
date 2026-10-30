@@ -60,34 +60,24 @@ def _open_camera_with_fallback(
          WIDTH/HEIGHT are set after FOURCC!).
     """
     backends = (
-        [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_ANY]
+        [cv2.CAP_DSHOW, cv2.CAP_MSMF]
         if IS_WINDOWS
-        else [cv2.CAP_V4L2, cv2.CAP_ANY]
+        else [cv2.CAP_V4L2]
     )
-    init_params = [
-        cv2.CAP_PROP_FOURCC, MJPG_FOURCC,
-        cv2.CAP_PROP_FRAME_WIDTH, width,
-        cv2.CAP_PROP_FRAME_HEIGHT, height,
-        cv2.CAP_PROP_FPS, fps,
-        cv2.CAP_PROP_BUFFERSIZE, 1,
-    ]
 
     with _CAMERA_OPEN_LOCK:
         for backend in backends:
             cap = None
             try:
-                # 1. Try opening with constructor params (enforces MJPG before stream pin starts)
-                try:
-                    cap = cv2.VideoCapture(device_index, backend, init_params)
-                except TypeError:
-                    cap = cv2.VideoCapture(device_index, backend)
-
+                cap = cv2.VideoCapture(device_index, backend)
                 if cap is None or not cap.isOpened():
                     if cap is not None:
                         cap.release()
                     continue
 
-                # 2. In DirectShow, ALWAYS set width/height BEFORE FOURCC=MJPG!
+                # Crucial for Windows DirectShow (CAP_DSHOW) with 3 cameras:
+                # ALWAYS set WIDTH and HEIGHT *before* FOURCC=MJPG!
+                # Setting WIDTH/HEIGHT after FOURCC resets DirectShow back to uncompressed YUY2.
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
                 cap.set(cv2.CAP_PROP_FPS, fps)
@@ -98,18 +88,7 @@ def _open_camera_with_fallback(
                 if ok and frame is not None:
                     return cap
 
-                # Fallback if camera only supports uncompressed format
                 cap.release()
-                cap = cv2.VideoCapture(device_index, backend)
-                if cap is not None and cap.isOpened():
-                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-                    cap.set(cv2.CAP_PROP_FPS, 15)
-                    ok, frame = cap.read()
-                    if ok and frame is not None:
-                        return cap
-                if cap is not None:
-                    cap.release()
             except Exception:
                 if cap is not None:
                     try:

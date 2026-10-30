@@ -304,6 +304,14 @@ async def api_assign_camera(req: AssignCameraRequest):
     return {"slot": slot_status, "cameras": status}
 
 
+@app.post("/api/cameras/rescan")
+async def api_rescan_cameras():
+    status = camera_manager.rescan_and_auto_assign()
+    detector.capture_empty_reference()
+    await ws_manager.broadcast({"event": "cameras_update", "cameras": status})
+    return status
+
+
 @app.post("/api/calibration/save")
 async def api_save_calibration(req: SaveCalibrationRequest):
     pts = [(float(p[0]), float(p[1])) for p in req.points[:4]]

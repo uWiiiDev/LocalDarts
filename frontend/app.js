@@ -45,6 +45,7 @@ const I18N = {
     cal_select_slot: "Kamera-Slot auswählen",
     cal_video_source: "Video-Quelle (/dev/video* / DirectShow / Simulator)",
     btn_assign: "Zuweisen",
+    btn_rescan_cams: "🔍 Alle 3 USB-Kameras neu suchen & automatisch zuweisen",
     cal_preset_label: "Kalibrierungs-Vorlage (4 Punkte auf Double-Außenring)",
     cal_click_4_pts: "Klicke diese 4 Punkte der Reihe nach im Kamerabild rechts an:",
     btn_save_cal: "💾 Kalibrierung speichern",
@@ -112,6 +113,7 @@ const I18N = {
     cal_select_slot: "Select Camera Slot",
     cal_video_source: "Video Source (/dev/video* / DirectShow / Simulator)",
     btn_assign: "Assign",
+    btn_rescan_cams: "🔍 Rescan & Auto-Assign All 3 USB Cameras",
     cal_preset_label: "Calibration Preset (4 Points on Outer Double Wire)",
     cal_click_4_pts: "Click these 4 points in order on the camera feed on the right:",
     btn_save_cal: "💾 Save Calibration",
@@ -179,6 +181,7 @@ const I18N = {
     cal_select_slot: "Choisir la Caméra",
     cal_video_source: "Source Vidéo (/dev/video* / DirectShow / Simulateur)",
     btn_assign: "Affecter",
+    btn_rescan_cams: "🔍 Rechercher & Affecter les 3 Caméras USB",
     cal_preset_label: "Modèle de Calibration (4 points sur l'anneau Double extérieur)",
     cal_click_4_pts: "Cliquez sur ces 4 points dans l'ordre sur l'image de droite :",
     btn_save_cal: "💾 Enregistrer Calibration",
@@ -1390,6 +1393,14 @@ document.addEventListener("DOMContentLoaded", () => {
       body: JSON.stringify({ slot_id: appState.calCamId, device_index: devIdx }),
     });
     setTimeout(refreshCalibrationSnapshot, 250);
+  });
+
+  document.getElementById("btn-rescan-cameras").addEventListener("click", async () => {
+    await fetch("/api/cameras/rescan", { method: "POST" });
+    setTimeout(() => {
+      populateCalibrationControls();
+      refreshCalibrationSnapshot();
+    }, 450);
   });
 
   document.getElementById("cal-preset-select").addEventListener("change", (ev) => {

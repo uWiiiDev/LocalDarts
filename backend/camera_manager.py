@@ -40,52 +40,109 @@ CONFIG_DIR = get_writable_config_dir()
 CAMERA_CONFIG_FILE = CONFIG_DIR / "cameras.json"
 IS_WINDOWS = sys.platform.startswith("win")
 
+# Global mutex to prevent concurrent DirectShow/USB hub initialization race conditions
+_CAMERA_OPEN_LOCK = threading.Lock()
+MJPG_FOURCC = cv2.VideoWriter_fourcc(*"MJPG")
 
-def _open_camera_with_fallback(device_index: int) -> Optional[cv2.VideoCapture]:
+
+def _open_camera_with_fallback(
+    device_index: int,
+    width: int = 640,
+    height: int = 480,
+    fps: int = 20,
+) -> Optional[cv2.VideoCapture]:
     """
-    Open a physical camera by index using the best platform backend with automatic fallback.
-    On Windows: tries DirectShow (CAP_DSHOW), then Media Foundation (CAP_MSMF), then CAP_ANY.
-    On Linux: tries V4L2 (CAP_V4L2), then CAP_ANY.
+    Open a physical USB camera in low-bandwidth MJPG mode right from initialization.
+    Crucial for 3-camera setups on a single USB 2.0 root hub (like Autodarts):
+      1. Passes MJPG + resolution + FPS directly to the VideoCapture constructor so the
+         USB controller never allocates uncompressed YUY2 bandwidth (~48% per camera).
+      2. Sets WIDTH/HEIGHT *before* FOURCC=MJPG (OpenCV DirectShow resets FOURCC if
+         WIDTH/HEIGHT are set after FOURCC!).
     """
     backends = (
         [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_ANY]
         if IS_WINDOWS
         else [cv2.CAP_V4L2, cv2.CAP_ANY]
     )
-    for backend in backends:
-        try:
-            cap = cv2.VideoCapture(device_index, backend)
-            if cap is not None and cap.isOpened():
-                return cap
-            if cap is not None:
+    init_params = [
+        cv2.CAP_PROP_FOURCC, MJPG_FOURCC,
+        cv2.CAP_PROP_FRAME_WIDTH, width,
+        cv2.CAP_PROP_FRAME_HEIGHT, height,
+        cv2.CAP_PROP_FPS, fps,
+        cv2.CAP_PROP_BUFFERSIZE, 1,
+    ]
+
+    with _CAMERA_OPEN_LOCK:
+        for backend in backends:
+            cap = None
+            try:
+                # 1. Try opening with constructor params (enforces MJPG before stream pin starts)
+                try:
+                    cap = cv2.VideoCapture(device_index, backend, init_params)
+                except TypeError:
+                    cap = cv2.VideoCapture(device_index, backend)
+
+                if cap is None or not cap.isOpened():
+                    if cap is not None:
+                        cap.release()
+                    continue
+
+                # 2. In DirectShow, ALWAYS set width/height BEFORE FOURCC=MJPG!
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+                cap.set(cv2.CAP_PROP_FPS, fps)
+                cap.set(cv2.CAP_PROP_FOURCC, MJPG_FOURCC)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+                ok, frame = cap.read()
+                if ok and frame is not None:
+                    return cap
+
+                # Fallback if camera only supports uncompressed format
                 cap.release()
-        except Exception:
-            pass
+                cap = cv2.VideoCapture(device_index, backend)
+                if cap is not None and cap.isOpened():
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+                    cap.set(cv2.CAP_PROP_FPS, 15)
+                    ok, frame = cap.read()
+                    if ok and frame is not None:
+                        return cap
+                if cap is not None:
+                    cap.release()
+            except Exception:
+                if cap is not None:
+                    try:
+                        cap.release()
+                    except Exception:
+                        pass
     return None
 
 
 def discover_video_devices(probe_windows: bool = False) -> List[dict]:
     """
     Discover available video devices.
-    On Linux: reads /sys/class/video4linux/ without locking active streams.
-    On Windows: provides USB camera slots 0..3 (and optionally probes at startup).
+    On Windows: scans indices 0..8 so all 3 USB cameras are found even if an
+    integrated webcam, IR camera, or virtual camera occupies one of the lower indices.
     """
     devices = []
     if IS_WINDOWS:
-        for idx in range(4):
+        for idx in range(9):
             status_suffix = ""
+            is_connected = False
             if probe_windows:
-                cap = _open_camera_with_fallback(idx)
+                cap = _open_camera_with_fallback(idx, width=640, height=480, fps=20)
                 if cap is not None:
-                    ok, frame = cap.read()
+                    is_connected = True
+                    status_suffix = " [Angeschlossen ✓]"
                     cap.release()
-                    if ok and frame is not None:
-                        status_suffix = " [Angeschlossen ✓]"
+                    time.sleep(0.08)
             devices.append(
                 {
                     "index": idx,
                     "path": f"CAM:{idx}",
                     "name": f"USB-Kamera #{idx}{status_suffix}",
+                    "connected": is_connected,
                 }
             )
         return devices
@@ -103,7 +160,7 @@ def discover_video_devices(probe_windows: bool = False) -> List[dict]:
                 name = f"{sys_name_path.read_text().strip()} ({p})"
             except Exception:
                 pass
-        devices.append({"index": idx, "path": p, "name": name})
+        devices.append({"index": idx, "path": p, "name": name, "connected": True})
     return devices
 
 
@@ -122,7 +179,6 @@ class SyntheticBoardRenderer:
         self._build_camera_perspectives()
 
     def _create_topdown_board(self, size: int = 600) -> np.ndarray:
-        """Render a clean top-down bristle dartboard in [-1.2, +1.2] board space."""
         img = np.full((size, size, 3), (28, 30, 34), dtype=np.uint8)
         center = (size // 2, size // 2)
         scale = size / 2.4
@@ -295,31 +351,16 @@ class CameraStreamSlot:
             self.is_physical_open = False
             return False
         try:
-            cap = _open_camera_with_fallback(self.device_index)
+            cap = _open_camera_with_fallback(self.device_index, width=self.width, height=self.height, fps=20)
             if cap is None:
                 self.is_physical_open = False
                 return False
 
-            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-            cap.set(cv2.CAP_PROP_FPS, 30)
-
             ok, frame = cap.read()
             if not ok or frame is None:
-                # Retry without forcing MJPG in case a Windows webcam driver only supports YUY2/RGB
                 cap.release()
-                cap = _open_camera_with_fallback(self.device_index)
-                if cap is None:
-                    self.is_physical_open = False
-                    return False
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-                ok, frame = cap.read()
-                if not ok or frame is None:
-                    cap.release()
-                    self.is_physical_open = False
-                    return False
+                self.is_physical_open = False
+                return False
 
             with self._lock:
                 self._latest_frame = frame
@@ -394,30 +435,47 @@ class CameraManager:
         self._cached_devices = discover_video_devices(probe_windows=True)
         usable_indices = self._probe_usable_devices(self._cached_devices)
 
+        # Smart assignment: if saved_map had -1 (Simulation) for a slot, or if a saved index is no longer valid,
+        # automatically fill unassigned slots with newly discovered physical USB cameras!
+        used_indices = set()
+        slot_assignments: Dict[int, int] = {}
+
+        for slot_id in range(num_slots):
+            saved_idx = saved_map.get(slot_id, -1)
+            if saved_idx >= 0 and saved_idx in usable_indices and saved_idx not in used_indices:
+                slot_assignments[slot_id] = saved_idx
+                used_indices.add(saved_idx)
+
+        # Fill any remaining slots with unused physical USB cameras
+        remaining_usable = [idx for idx in usable_indices if idx not in used_indices]
+        for slot_id in range(num_slots):
+            if slot_id not in slot_assignments:
+                if remaining_usable:
+                    slot_assignments[slot_id] = remaining_usable.pop(0)
+                else:
+                    slot_assignments[slot_id] = -1
+
         self.slots: Dict[int, CameraStreamSlot] = {}
         for slot_id in range(num_slots):
-            if slot_id in saved_map:
-                dev_idx = saved_map[slot_id]
-            elif slot_id < len(usable_indices):
-                dev_idx = usable_indices[slot_id]
-            else:
-                dev_idx = -1
-            slot = CameraStreamSlot(slot_id=slot_id, device_index=dev_idx, renderer=self.renderer)
-            self.slots[slot_id] = slot
+            self.slots[slot_id] = CameraStreamSlot(
+                slot_id=slot_id,
+                device_index=slot_assignments[slot_id],
+                renderer=self.renderer,
+            )
+        self.save_mapping()
 
     @staticmethod
     def _probe_usable_devices(discovered: List[dict]) -> List[int]:
         if IS_WINDOWS:
-            return [d["index"] for d in discovered if "[Angeschlossen" in d.get("name", "")]
+            return [d["index"] for d in discovered if d.get("connected")]
         usable = []
         for dev in discovered:
             idx = dev["index"]
-            cap = _open_camera_with_fallback(idx)
+            cap = _open_camera_with_fallback(idx, width=640, height=480, fps=20)
             if cap is not None:
-                ok, frame = cap.read()
+                usable.append(idx)
                 cap.release()
-                if ok and frame is not None:
-                    usable.append(idx)
+                time.sleep(0.05)
         return usable
 
     def _load_saved_mapping(self) -> Dict[int, int]:
@@ -440,12 +498,35 @@ class CameraManager:
         CAMERA_CONFIG_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     def start_all(self) -> None:
+        """Start all 3 camera slots with a slight stagger so the USB bus doesn't spike."""
         for slot in self.slots.values():
             slot.start()
+            time.sleep(0.22)
 
     def stop_all(self) -> None:
         for slot in self.slots.values():
             slot.stop()
+
+    def rescan_and_auto_assign(self) -> dict:
+        """
+        Stop all cameras, scan all USB video devices cleanly, auto-assign up to 3
+        physical USB cameras in MJPG mode, and restart all streams.
+        """
+        self.stop_all()
+        time.sleep(0.25)
+        self._cached_devices = discover_video_devices(probe_windows=True)
+        usable_indices = self._probe_usable_devices(self._cached_devices)
+
+        for slot_id in range(self.num_slots):
+            if slot_id < len(usable_indices):
+                self.slots[slot_id].device_index = usable_indices[slot_id]
+            else:
+                self.slots[slot_id].device_index = -1
+
+        self.save_mapping()
+        self.start_all()
+        time.sleep(0.25)
+        return self.get_status()
 
     def assign_device(self, slot_id: int, device_index: int) -> dict:
         if slot_id in self.slots:

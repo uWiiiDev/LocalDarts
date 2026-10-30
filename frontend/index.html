@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LocalDarts – Lokales Autodarts System</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <!-- Top Navigation Bar -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-icon">🎯</div>
+      <div>
+        <span class="brand-title">LocalDarts</span>
+        <span class="brand-sub" data-i18n="brand_sub">Lokales 3-Kamera Autodarts System</span>
+      </div>
+    </div>
+
+    <nav class="nav-tabs">
+      <button class="nav-tab active" data-tab="tab-scoreboard" data-i18n="tab_scoreboard">🎯 Scoreboard & Board</button>
+      <button class="nav-tab" data-tab="tab-calibration" data-i18n="tab_calibration">📷 Kamera-Kalibrierung</button>
+      <button class="nav-tab" data-tab="tab-diagnostics" data-i18n="tab_diagnostics">🔬 Vision-Diagnose & Stats</button>
+    </nav>
+
+    <div class="top-actions">
+      <select id="lang-select" class="lang-select" title="Sprache / Language / Langue">
+        <option value="de">🇩🇪 DE</option>
+        <option value="en">🇬🇧 EN</option>
+        <option value="fr">🇫🇷 FR</option>
+      </select>
+      <div class="status-pill" title="OpenCV Vision-Status">
+        <span id="vision-dot" class="status-dot"></span>
+        <span id="vision-status-text">VISION: READY (0/3)</span>
+      </div>
+      <button id="btn-toggle-caller" class="btn btn-sm">
+        🔊 Caller: AN
+      </button>
+      <button id="btn-open-newgame" class="btn btn-primary btn-sm" data-i18n="btn_new_game">
+        ➕ Neues Spiel
+      </button>
+    </div>
+  </header>
+
+  <!-- TAB 1: SCOREBOARD & INTERACTIVE BOARD -->
+  <main id="tab-scoreboard" class="tab-panel active">
+    <div class="scoreboard-grid">
+      <!-- Left Column: Players, Turn Darts, Controls, Mini Cams -->
+      <div>
+        <div class="announcement-bar">
+          <span id="announcement-text" class="announcement-text">Bereit für den ersten Wurf!</span>
+          <div style="display: flex; align-items: center; gap: 0.45rem;">
+            <button id="btn-toggle-rules-banner" class="btn btn-sm" style="padding: 0.2rem 0.55rem; font-size: 0.74rem;" data-i18n="btn_rules_info">📖 Spielregeln</button>
+            <span id="round-badge" class="round-badge">Runde 1</span>
+          </div>
+        </div>
+
+        <!-- Collapsible Active Game Rules Info Box on Scoreboard -->
+        <div id="scoreboard-rules-box" class="game-guide-box" style="display: none;">
+          <div id="scoreboard-rules-title" class="game-guide-title">📖 Spielanleitung</div>
+          <div id="scoreboard-rules-text"></div>
+        </div>
+
+        <!-- Players Container (1 to 6 Players) -->
+        <div id="players-container" class="players-list"></div>
+
+        <!-- Optional Cricket Table (visible in Cricket mode) -->
+        <div id="cricket-board-wrap" class="card" style="display: none; margin-bottom: 1rem;">
+          <div class="card-header">
+            <div class="card-title" data-i18n="cricket_overview">🏏 Cricket Übersicht</div>
+          </div>
+          <table class="cricket-table">
+            <thead>
+              <tr id="cricket-header-row">
+                <th>Feld</th>
+              </tr>
+            </thead>
+            <tbody id="cricket-body"></tbody>
+          </table>
+        </div>
+
+        <!-- Optional Tic-Tac-Toe 3x3 Grid (visible in Tic-Tac-Toe mode) -->
+        <div id="tictactoe-board-wrap" class="card" style="display: none; margin-bottom: 1rem;">
+          <div class="card-header">
+            <div class="card-title" data-i18n="ttt_overview">❌⭕ Tic-Tac-Toe 3×3 Raster (3 Marks zum Erobern)</div>
+          </div>
+          <div id="tictactoe-grid" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.6rem;"></div>
+        </div>
+
+        <!-- Current Turn 3-Dart Box -->
+        <div class="turn-box">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+            <span style="font-size: 0.84rem; font-weight: 700; color: var(--text-muted);">
+              <span data-i18n="current_visit">AKTUELLE AUFNAHME</span>
+              <span id="edit-hint-badge" style="color: var(--accent-amber); margin-left: 0.4rem;" data-i18n="click_slot_to_edit">(Klicke einen Slot zum Korrigieren)</span>
+            </span>
+            <div style="display: flex; gap: 0.45rem;">
+              <button id="btn-undo" class="btn btn-sm" data-i18n="btn_undo">↩️ Undo</button>
+              <button id="btn-reset-bg" class="btn btn-sm" data-i18n="btn_empty_board">📷 Leeres Board</button>
+              <button id="btn-next-player" class="btn btn-primary btn-sm" data-i18n="btn_next_player">👋 Pfeile gezogen / Weiter</button>
+            </div>
+          </div>
+
+          <div class="turn-slots">
+            <div class="dart-slot" data-slot="0">
+              <span class="slot-num">1. Dart</span>
+              <span class="slot-val" id="slot-val-0">–</span>
+              <span class="slot-sub" id="slot-sub-0">Bereit</span>
+            </div>
+            <div class="dart-slot" data-slot="1">
+              <span class="slot-num">2. Dart</span>
+              <span class="slot-val" id="slot-val-1">–</span>
+              <span class="slot-sub" id="slot-sub-1">Bereit</span>
+            </div>
+            <div class="dart-slot" data-slot="2">
+              <span class="slot-num">3. Dart</span>
+              <span class="slot-val" id="slot-val-2">–</span>
+              <span class="slot-sub" id="slot-sub-2">Bereit</span>
+            </div>
+            <div class="turn-total-box">
+              <span class="slot-num" data-i18n="visit_total">Aufnahme</span>
+              <span class="turn-total-val" id="turn-total-val">0</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3 Live Mini Camera Previews -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title" data-i18n="live_cams_title">📹 Live 3-Kamera Triangulation</div>
+            <span style="font-size: 0.76rem; color: var(--text-muted);" data-i18n="live_cams_legend">Grünes Gitter = Kalibrierung | Roter Kreis = Erkannte Spitze</span>
+          </div>
+          <div class="mini-cams-grid">
+            <div class="mini-cam-card">
+              <div class="mini-cam-header">
+                <span>Cam 1</span>
+                <span id="mini-cam-status-0">Bereit</span>
+              </div>
+              <img id="mini-cam-img-0" class="mini-cam-img" alt="Kamera 1" />
+            </div>
+            <div class="mini-cam-card">
+              <div class="mini-cam-header">
+                <span>Cam 2</span>
+                <span id="mini-cam-status-1">Bereit</span>
+              </div>
+              <img id="mini-cam-img-2-lbl" style="display:none" />
+              <img id="mini-cam-img-1" class="mini-cam-img" alt="Kamera 2" />
+            </div>
+            <div class="mini-cam-card">
+              <div class="mini-cam-header">
+                <span>Cam 3</span>
+                <span id="mini-cam-status-2">Bereit</span>
+              </div>
+              <img id="mini-cam-img-2" class="mini-cam-img" alt="Kamera 3" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column: Interactive SVG Dartboard + Manual Keypad -->
+      <div class="card board-wrapper">
+        <div class="card-header" style="width: 100%;">
+          <div class="card-title" data-i18n="interactive_board_title">🎯 Interaktives Dartboard (Live-Treffer & Korrektur)</div>
+          <label style="font-size: 0.78rem; display: flex; align-items: center; gap: 0.4rem; cursor: pointer; color: var(--accent-blue);">
+            <input type="checkbox" id="chk-throw-via-vision" />
+            <span data-i18n="chk_sim_vision">Klick = 3D-Kamerawurf simulieren</span>
+          </label>
+        </div>
+
+        <div class="svg-board-container">
+          <svg id="interactive-dartboard" viewBox="-125 -125 250 250"></svg>
+        </div>
+
+        <div style="font-size: 0.76rem; color: var(--text-muted); margin-top: 0.35rem; text-align: center;" data-i18n="board_click_hint">
+          Klicke direkt in ein Feld auf dem Dartboard (oder nutze das Tastenfeld unten), um einen Wurf einzutragen oder einen markierten Slot zu korrigieren.
+        </div>
+
+        <!-- Quick Manual Score Keypad -->
+        <div class="keypad-section">
+          <div class="mult-bar">
+            <button class="mult-btn active" data-mult="1">Single (1x)</button>
+            <button class="mult-btn" data-mult="2">Double (2x)</button>
+            <button class="mult-btn" data-mult="3">Triple (3x)</button>
+          </div>
+          <div id="keypad-numbers" class="num-grid"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- TAB 2: CAMERA SETUP & 4-POINT CALIBRATION -->
+  <section id="tab-calibration" class="tab-panel">
+    <div class="calibration-layout">
+      <!-- Left Sidebar: Camera Selection, 4-Point Steps, Sensitivity -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title" data-i18n="cal_sidebar_title">📷 Kamera & Referenzpunkte</div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" data-i18n="cal_select_slot">Kamera-Slot auswählen</label>
+          <select id="cal-cam-select" class="form-control">
+            <option value="0">Kamera 1 (12h)</option>
+            <option value="1">Kamera 2 (4h)</option>
+            <option value="2">Kamera 3 (8h)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" data-i18n="cal_video_source">Video-Quelle (/dev/video* / DirectShow / Simulator)</label>
+          <div style="display: flex; gap: 0.4rem;">
+            <select id="cal-device-select" class="form-control"></select>
+            <button id="btn-assign-device" class="btn btn-sm btn-primary" data-i18n="btn_assign">Zuweisen</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" data-i18n="cal_preset_label">Kalibrierungs-Vorlage (4 Punkte auf Double-Außenring)</label>
+          <select id="cal-preset-select" class="form-control"></select>
+        </div>
+
+        <!-- Visual Mini Reference Guide -->
+        <div style="background: var(--bg-input); border: 1px solid var(--border-col); border-radius: 10px; padding: 0.65rem; margin-bottom: 0.75rem; text-align: center;">
+          <div style="font-size: 0.76rem; color: var(--text-muted); margin-bottom: 0.35rem;" data-i18n="cal_click_4_pts">
+            Klicke diese 4 Punkte der Reihe nach im Kamerabild rechts an:
+          </div>
+          <svg id="cal-guide-svg" viewBox="-125 -125 250 250" style="width: 165px; height: 165px; margin: 0 auto; display: block;"></svg>
+        </div>
+
+        <ul id="cal-steps-list" class="point-step-list"></ul>
+
+        <div style="display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.75rem;">
+          <button id="btn-save-cal" class="btn btn-primary" style="flex: 1;" data-i18n="btn_save_cal">💾 Kalibrierung speichern</button>
+          <button id="btn-clear-cal-pts" class="btn btn-danger btn-sm" data-i18n="btn_clear_pts">🗑️ Punkte löschen</button>
+        </div>
+        <div style="margin-top: 0.45rem;">
+          <button id="btn-auto-sim-cal" class="btn btn-amber btn-sm" style="width: 100%;" data-i18n="btn_demo_cal">
+            ✨ Demo-/Simulations-Kalibrierung für alle 3 Kameras laden
+          </button>
+        </div>
+
+        <hr style="border: none; border-top: 1px solid var(--border-col); margin: 1rem 0;" />
+
+        <div class="card-title" style="margin-bottom: 0.65rem;" data-i18n="cv_tuning_title">⚙️ OpenCV Erkennungs-Feintuning</div>
+        <div class="form-group">
+          <label class="form-label"><span data-i18n="lbl_diff_thresh">Differenz-Schwellwert</span>: <strong id="lbl-diff-thresh">26</strong></label>
+          <input type="range" id="rng-diff-thresh" min="10" max="80" value="26" style="width: 100%;" />
+        </div>
+        <div class="form-group">
+          <label class="form-label"><span data-i18n="lbl_min_area">Min. Dart-Konturfläche (px²)</span>: <strong id="lbl-min-area">120</strong></label>
+          <input type="range" id="rng-min-area" min="40" max="800" step="10" value="120" style="width: 100%;" />
+        </div>
+        <div class="form-group">
+          <label class="form-label"><span data-i18n="lbl_settle_ms">Beruhigungszeit nach Wurf (ms)</span>: <strong id="lbl-settle-ms">260</strong></label>
+          <input type="range" id="rng-settle-ms" min="100" max="800" step="20" value="260" style="width: 100%;" />
+        </div>
+      </div>
+
+      <!-- Right Area: Interactive Camera Canvas + Rectified Top-Down Verification -->
+      <div class="cal-Dual-views">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title" data-i18n="cal_cam_view_title">1. Kamerabild – Klicke Punkt P1 bis P4</div>
+            <button id="btn-refresh-cal-frame" class="btn btn-sm" data-i18n="btn_refresh_frame">🔄 Bild aktualisieren</button>
+          </div>
+          <div class="cal-canvas-wrap">
+            <canvas id="calibration-canvas" width="640" height="480"></canvas>
+          </div>
+          <p style="font-size: 0.78rem; color: var(--text-muted); margin-top: 0.55rem;" data-i18n="cal_drag_hint">
+            Tipp: Klicke auf die 4 markierten Kreuzungspunkte am äußeren Draht des Double-Rings. Bereits gesetzte Punkte (P1–P4) kannst du mit der Maus ziehen, bis das grüne Spinnennetz exakt auf den Drähten deines Dartboards liegt!
+          </p>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title" data-i18n="cal_warped_title">2. Entzerrte Draufsicht (Homographie-Prüfung)</div>
+          </div>
+          <div class="cal-canvas-wrap">
+            <img id="cal-warped-preview" style="width: 100%; aspect-ratio: 1/1; display: block; object-fit: contain;" alt="Warped Preview" />
+          </div>
+          <p style="font-size: 0.78rem; color: var(--text-muted); margin-top: 0.55rem;" data-i18n="cal_warped_hint">
+            Hier siehst du das mathematisch entzerrte Bild der Kamera. Wenn die gezeichneten Ringe (Bull, Triple, Double) deckungsgleich mit deinem echten Board sind, arbeitet die Koordinaten-Umrechnung millimetergenau.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TAB 3: VISION DIAGNOSTICS & THROW DISPERSION -->
+  <section id="tab-diagnostics" class="tab-panel">
+    <div class="scoreboard-grid">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title" data-i18n="diag_diff_title">🔬 Live Differenz-Masken (Hintergrund-Subtraktion)</div>
+          <button id="btn-diag-reset-bg" class="btn btn-sm btn-primary" data-i18n="btn_recapture_bg">📷 Referenzbild jetzt neu aufnehmen</button>
+        </div>
+        <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.8rem;" data-i18n="diag_diff_desc">
+          Weiß = Veränderung gegenüber dem letzten ruhenden Zustand. Grün = Erkannte Dart-Kontur. Roter Kreis = Berechnete Pfeilspitze.
+        </p>
+        <div class="mini-cams-grid">
+          <div class="mini-cam-card">
+            <div class="mini-cam-header"><span>Diff Cam 1</span></div>
+            <img id="diag-diff-0" class="mini-cam-img" alt="Diff 1" />
+          </div>
+          <div class="mini-cam-card">
+            <div class="mini-cam-header"><span>Diff Cam 2</span></div>
+            <img id="diag-diff-1" class="mini-cam-img" alt="Diff 2" />
+          </div>
+          <div class="mini-cam-card">
+            <div class="mini-cam-header"><span>Diff Cam 3</span></div>
+            <img id="diag-diff-2" class="mini-cam-img" alt="Diff 3" />
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title" data-i18n="stats_summary_title">📊 Trefferbild & Spieler-Statistiken</div>
+        </div>
+        <div id="stats-summary-cards" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.65rem; margin-bottom: 0.85rem;"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- MODAL: NEW GAME SETUP -->
+  <div id="modal-newgame" class="modal-backdrop">
+    <div class="modal-card">
+      <div class="card-header">
+        <div class="card-title" style="font-size: 1.15rem;" data-i18n="modal_new_game_title">🎯 Neues Spiel starten</div>
+        <button id="btn-close-newgame" class="btn btn-sm">✕</button>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" data-i18n="lbl_select_game_mode">Spielmodus auswählen (16 Spiele)</label>
+        <select id="ng-mode" class="form-control">
+          <optgroup label="🏆 Turnier & Klassiker" id="optgrp-classic">
+            <option value="x01" selected>1. X01 (301 / 501 / 701 / 170 Checkout)</option>
+            <option value="cricket">2. Cricket (Standard / Cut-Throat)</option>
+            <option value="atc">3. Around the Clock (1–20 + Bull)</option>
+            <option value="shanghai">4. Shanghai (1–20 + Sofort-Sieg)</option>
+            <option value="highscore">5. Freies Training / Highscore</option>
+          </optgroup>
+          <optgroup label="🎉 Party & Mehrspieler" id="optgrp-party">
+            <option value="elimination">6. Elimination (Mensch ärgere dich nicht)</option>
+            <option value="killer">7. Killer (Doppel-Zahlen & 3 Leben)</option>
+            <option value="halve_it">8. Halve It / Halbieren (8 Zielrunden)</option>
+            <option value="gotcha">9. Gotcha (301 + Meilenstein-Bust & Bull-Tausch)</option>
+            <option value="tictactoe">10. Tic-Tac-Toe Darts (3×3 Sektor-Raster)</option>
+            <option value="bermuda">11. Bermuda Triangle (13 Runden)</option>
+          </optgroup>
+          <optgroup label="🏋️ Profi- & Checkout-Training" id="optgrp-training">
+            <option value="bobs27">12. Bob's 27 (Doppel-Training D1–DBull)</option>
+            <option value="jdc_challenge">13. JDC Challenge (Shanghai + Doubles)</option>
+            <option value="catch40">14. Catch 40 (Checkouts 61–100)</option>
+            <option value="checkout121">15. 121 Checkout-Leiter (Ab 121 in 9 Darts)</option>
+            <option value="scoring100">16. Bulls-Eye / Scoring 100 (99 Darts)</option>
+          </optgroup>
+        </select>
+      </div>
+
+      <!-- Short Instructions / Game Guide Box -->
+      <div id="ng-game-guide-box" class="game-guide-box">
+        <div id="ng-guide-title" class="game-guide-title">📖 Spielanleitung</div>
+        <div id="ng-guide-text"></div>
+      </div>
+
+      <div id="ng-x01-options">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+          <div class="form-group">
+            <label class="form-label" data-i18n="lbl_start_points">Ziel-/Start-Punkte</label>
+            <select id="ng-start-score" class="form-control">
+              <option value="301">301</option>
+              <option value="501" selected>501</option>
+              <option value="701">701</option>
+              <option value="170">170 (Checkout)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="lbl_out_mode">Check-Out Modus</label>
+            <select id="ng-out-mode" class="form-control">
+              <option value="double" selected>Double Out</option>
+              <option value="single">Single Out</option>
+              <option value="master">Master Out (Double/Triple)</option>
+            </select>
+          </div>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+          <div class="form-group">
+            <label class="form-label" data-i18n="lbl_in_mode">Check-In Modus</label>
+            <select id="ng-double-in" class="form-control">
+              <option value="0" selected>Straight In</option>
+              <option value="1">Double In</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="lbl_legs_to_win">Legs zum Sieg (First to)</label>
+            <input type="number" id="ng-legs" class="form-control" value="3" min="1" max="25" />
+          </div>
+        </div>
+      </div>
+
+      <div id="ng-cricket-options" style="display: none;">
+        <div class="form-group">
+          <label class="form-label" data-i18n="lbl_cricket_variant">Cricket-Variante</label>
+          <select id="ng-cricket-variant" class="form-control">
+            <option value="standard" selected>Standard Cricket</option>
+            <option value="cutthroat">Cut-Throat Cricket</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="ng-scoring100-options" style="display: none;">
+        <div class="form-group">
+          <label class="form-label" data-i18n="lbl_target_sector">Zielsektor für Scoring 100</label>
+          <select id="ng-target-sector" class="form-control">
+            <option value="20" selected>Sektor 20</option>
+            <option value="19">Sektor 19</option>
+            <option value="18">Sektor 18</option>
+            <option value="25">Bullseye (25 / 50)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Up to 6 Players Configuration -->
+      <div class="form-group">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+          <label class="form-label" style="margin: 0;" data-i18n="lbl_players_up_to_6">Spieler (1 bis 6 Spieler)</label>
+          <div style="display: flex; gap: 0.35rem;">
+            <button type="button" id="btn-add-player" class="btn btn-sm" style="padding: 0.2rem 0.55rem;" data-i18n="btn_add_player">➕ Spieler hinzufügen</button>
+          </div>
+        </div>
+        <div id="ng-players-grid" class="player-inputs-grid"></div>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 0.6rem; margin-top: 1rem;">
+        <button id="btn-cancel-newgame" class="btn" data-i18n="btn_cancel">Abbrechen</button>
+        <button id="btn-start-newgame" class="btn btn-primary" data-i18n="btn_start_game">🚀 Spiel starten</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

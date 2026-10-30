@@ -25,10 +25,17 @@ from .board_geometry import (
 
 
 def get_writable_config_dir() -> Path:
-    """Return writable config directory next to the executable (PyInstaller) or project root."""
+    """Return writable config directory (supports env override, /opt install, PyInstaller, or project root)."""
+    import os
+    env_dir = os.environ.get("LOCALDARTS_CONFIG_DIR")
+    if env_dir:
+        return Path(env_dir).expanduser().resolve()
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent / "config"
-    return Path(__file__).resolve().parent.parent / "config"
+    proj_root = Path(__file__).resolve().parent.parent
+    if str(proj_root).startswith("/opt/") or not os.access(proj_root, os.W_OK):
+        return Path.home() / ".config" / "localdarts"
+    return proj_root / "config"
 
 
 CONFIG_DIR = get_writable_config_dir()

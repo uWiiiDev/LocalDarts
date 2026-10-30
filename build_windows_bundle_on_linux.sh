@@ -51,7 +51,7 @@ done
 rm -rf "${WHEELS_DIR}"
 
 echo "[4/4] Kopiere LocalDarts Anwendungsdateien und schnüre ZIP-Paket..."
-cp -r backend frontend run_app.py requirements.txt start_windows.bat installer_windows.iss "${DIST_DIR}/"
+cp -r backend frontend run_app.py requirements.txt start_windows.bat installer_windows.iss README.md HILFE_ANLEITUNG.md "${DIST_DIR}/"
 
 python3 - << 'PYEOF'
 import shutil

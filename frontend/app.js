@@ -19,6 +19,7 @@ const I18N = {
     tab_scoreboard: "🎯 Scoreboard & Board",
     tab_calibration: "📷 Kamera-Kalibrierung",
     tab_diagnostics: "🔬 Vision-Diagnose & Stats",
+    tab_help: "❓ Hilfe & Anleitung",
     btn_new_game: "➕ Neues Spiel",
     btn_rules_info: "📖 Spielregeln",
     caller_on: "🔊 Caller: AN",
@@ -87,6 +88,7 @@ const I18N = {
     tab_scoreboard: "🎯 Scoreboard & Board",
     tab_calibration: "📷 Camera Calibration",
     tab_diagnostics: "🔬 Vision Diagnostics & Stats",
+    tab_help: "❓ Help & Manual",
     btn_new_game: "➕ New Game",
     btn_rules_info: "📖 Game Rules",
     caller_on: "🔊 Caller: ON",
@@ -155,6 +157,7 @@ const I18N = {
     tab_scoreboard: "🎯 Scoreboard & Cible",
     tab_calibration: "📷 Calibration Caméras",
     tab_diagnostics: "🔬 Diagnostic Vision & Stats",
+    tab_help: "❓ Aide & Guide",
     btn_new_game: "➕ Nouvelle Partie",
     btn_rules_info: "📖 Règles du jeu",
     caller_on: "🔊 Annonceur: OUI",
@@ -1256,7 +1259,7 @@ function startCameraPreviewLoop() {
         if (img) img.src = `/api/stream/camera/${i}?view=diff&snapshot=1&t=${ts}`;
       }
     }
-  }, 380);
+  }, 240);
 }
 
 // --- WebSocket Connection ---
@@ -1402,6 +1405,19 @@ document.addEventListener("DOMContentLoaded", () => {
       refreshCalibrationSnapshot();
     }, 450);
   });
+
+  const fpsSelect = document.getElementById("cal-fps-select");
+  if (fpsSelect) {
+    fpsSelect.addEventListener("change", async (ev) => {
+      const target_fps = parseInt(ev.target.value, 10) || 20;
+      await fetch("/api/cameras/fps", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target_fps }),
+      });
+      setTimeout(refreshCalibrationSnapshot, 300);
+    });
+  }
 
   document.getElementById("cal-preset-select").addEventListener("change", (ev) => {
     appState.calPresetId = ev.target.value;

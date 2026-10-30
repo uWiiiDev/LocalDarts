@@ -21,6 +21,7 @@
       <button class="nav-tab active" data-tab="tab-scoreboard" data-i18n="tab_scoreboard">🎯 Scoreboard & Board</button>
       <button class="nav-tab" data-tab="tab-calibration" data-i18n="tab_calibration">📷 Kamera-Kalibrierung</button>
       <button class="nav-tab" data-tab="tab-diagnostics" data-i18n="tab_diagnostics">🔬 Vision-Diagnose & Stats</button>
+      <button class="nav-tab" data-tab="tab-help" data-i18n="tab_help">❓ Hilfe & Anleitung</button>
     </nav>
 
     <div class="top-actions">
@@ -218,6 +219,16 @@
         </div>
 
         <div class="form-group">
+          <label class="form-label" data-i18n="cal_fps_label">⚡ Kamera-Framerate (FPS)</label>
+          <select id="cal-fps-select" class="form-control">
+            <option value="15">15 FPS (USB-Sparmodus für langsame Hubs)</option>
+            <option value="20" selected>20 FPS (Autodarts Standard – empfohlen)</option>
+            <option value="30">30 FPS (Flüssig / Schnell)</option>
+            <option value="60">60 FPS (Maximum für High-Speed-Cams)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
           <label class="form-label" data-i18n="cal_preset_label">Kalibrierungs-Vorlage (4 Punkte auf Double-Außenring)</label>
           <select id="cal-preset-select" class="form-control"></select>
         </div>
@@ -321,6 +332,73 @@
           <div class="card-title" data-i18n="stats_summary_title">📊 Trefferbild & Spieler-Statistiken</div>
         </div>
         <div id="stats-summary-cards" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.65rem; margin-bottom: 0.85rem;"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TAB 4: HELP & CALIBRATION MANUAL -->
+  <section id="tab-help" class="tab-panel">
+    <div style="max-width: 980px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.1rem;">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title" style="font-size: 1.15rem;">🎯 Schritt-für-Schritt Anleitung: Die 4-Punkt Kamera-Kalibrierung</div>
+        </div>
+        <p style="font-size: 0.9rem; line-height: 1.6; color: var(--text-muted); margin-bottom: 0.9rem;">
+          Damit <strong>LocalDarts</strong> aus den 3 schrägen Kamerabildern millimetergenau berechnen kann, in welchem Feld eine Pfeilspitze steckt, benötigt jede Kamera <strong>4 feste Referenzpunkte außen am äußeren Draht des Double-Rings</strong>.
+        </p>
+
+        <div class="game-guide-box" style="margin-bottom: 1rem;">
+          <div class="game-guide-title">💡 Wichtigster Merksatz für alle 3 Kameras:</div>
+          Du klickst bei <strong>jeder</strong> der 3 Kameras immer auf <strong>dieselben 4 Stellen der echten Dartscheibe</strong> (orientiert an den echten Zahlen <strong>20, 6, 3 und 11</strong> auf dem Board) – ganz egal, wie verdreht oder schräg Kamera 2 und Kamera 3 auf die Scheibe blicken!
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.8rem; margin-bottom: 1rem;">
+          <div style="background: var(--bg-input); border: 1px solid #ff5050; border-radius: 10px; padding: 0.85rem;">
+            <strong style="color: #ff5050; font-size: 0.95rem;">🔴 Punkt P1: Draht 5 | 20</strong>
+            <p style="font-size: 0.82rem; color: var(--text-muted); margin-top: 0.35rem; line-height: 1.5;">
+              Suche auf dem Board die Zahl <strong>20</strong>. Klicke genau auf die Kreuzung, wo der Trenndraht zwischen <strong>5 und 20</strong> außen auf den <strong>äußeren Double-Draht</strong> trifft (linke Außenecke von D20).
+            </p>
+          </div>
+          <div style="background: var(--bg-input); border: 1px solid #ffdc00; border-radius: 10px; padding: 0.85rem;">
+            <strong style="color: #ffdc00; font-size: 0.95rem;">🟡 Punkt P2: Draht 13 | 6</strong>
+            <p style="font-size: 0.82rem; color: var(--text-muted); margin-top: 0.35rem; line-height: 1.5;">
+              Suche auf dem Board die Zahl <strong>6</strong>. Klicke genau auf die Kreuzung, wo der Trenndraht zwischen <strong>13 und 6</strong> außen auf den <strong>äußeren Double-Draht</strong> trifft (obere Außenecke von D6).
+            </p>
+          </div>
+          <div style="background: var(--bg-input); border: 1px solid #00ff66; border-radius: 10px; padding: 0.85rem;">
+            <strong style="color: #00ff66; font-size: 0.95rem;">🟢 Punkt P3: Draht 17 | 3</strong>
+            <p style="font-size: 0.82rem; color: var(--text-muted); margin-top: 0.35rem; line-height: 1.5;">
+              Suche auf dem Board die Zahl <strong>3</strong>. Klicke genau auf die Kreuzung, wo der Trenndraht zwischen <strong>17 und 3</strong> außen auf den <strong>äußeren Double-Draht</strong> trifft (rechte Außenecke von D3).
+            </p>
+          </div>
+          <div style="background: var(--bg-input); border: 1px solid #38bdf8; border-radius: 10px; padding: 0.85rem;">
+            <strong style="color: #38bdf8; font-size: 0.95rem;">🔵 Punkt P4: Draht 8 | 11</strong>
+            <p style="font-size: 0.82rem; color: var(--text-muted); margin-top: 0.35rem; line-height: 1.5;">
+              Suche auf dem Board die Zahl <strong>11</strong>. Klicke genau auf die Kreuzung, wo der Trenndraht zwischen <strong>8 und 11</strong> außen auf den <strong>äußeren Double-Draht</strong> trifft (untere Außenecke von D11).
+            </p>
+          </div>
+        </div>
+
+        <p style="font-size: 0.86rem; line-height: 1.6; color: var(--text-main);">
+          <strong>Feinjustierung per Maus:</strong> Sobald P1 bis P4 gesetzt sind, erscheint das <strong>grüne Spinnennetz</strong> auf dem Kamerabild und rechts daneben die <strong>entzerrte Draufsicht</strong>. Du kannst jeden der 4 Punkte nachträglich mit gedrückter Maustaste verschieben, bis Bullseye, Triple-Ring und Double-Ring exakt auf den echten Drähten deiner Scheibe sitzen! Danach für <strong>Kamera 2</strong> und <strong>Kamera 3</strong> wiederholen und einmal bei leerer Scheibe auf <strong>„📷 Leeres Board“</strong> klicken.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title" style="font-size: 1.05rem;">⚡ Framerate (FPS) & OpenCV-Erkennung optimieren</div>
+        </div>
+        <div style="font-size: 0.86rem; line-height: 1.65; color: var(--text-muted);">
+          <p style="margin-bottom: 0.5rem;">
+            • <strong style="color:#fff;">Kamera-Framerate (FPS):</strong> Im Reiter „📷 Kamera-Kalibrierung“ kannst du zwischen <strong>15, 20, 30 und 60 FPS</strong> wählen. Alle 3 Kameras laufen im komprimierten <strong>MJPG-Modus</strong>, damit sie gleichzeitig an einem USB-Controller betrieben werden können. Wenn deine Kameras direkt am Mainboard oder einem schnellen USB-3.0-Hub angeschlossen sind, kannst du problemlos <strong>30 FPS</strong> nutzen.
+          </p>
+          <p style="margin-bottom: 0.5rem;">
+            • <strong style="color:#fff;">Differenz-Schwellwert (Standard: 26):</strong> Falls Schatten oder Lichtschwankungen Fehl-Würfe auslösen, erhöhe den Wert leicht (z.B. 32–38). Falls sehr dunkle Pfeile vor schwarzen Feldern übersehen werden, senke ihn leicht (z.B. 18–22).
+          </p>
+          <p>
+            • <strong style="color:#fff;">Wurf im Spiel korrigieren:</strong> Falls ein Dart mal verdeckt war, klicke im Scoreboard unten einfach auf den Slot <strong>1. Dart / 2. Dart / 3. Dart</strong> und danach rechts auf dem interaktiven Dartboard auf das richtige Feld.
+          </p>
+        </div>
       </div>
     </div>
   </section>

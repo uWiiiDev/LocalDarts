@@ -315,12 +315,13 @@ class SyntheticBoardRenderer:
 class CameraStreamSlot:
     """Represents one of the 3 camera slots (physical USB camera or synthetic simulator)."""
 
-    def __init__(self, slot_id: int, device_index: Optional[int], renderer: SyntheticBoardRenderer):
+    def __init__(self, slot_id: int, device_index: Optional[int], renderer: SyntheticBoardRenderer, target_fps: int = 20):
         self.slot_id = slot_id
         self.device_index: Optional[int] = device_index
         self.renderer = renderer
         self.width = 640
         self.height = 480
+        self.target_fps = target_fps
         self.fps = 0.0
         self.is_physical_open = False
         self._cap: Optional[cv2.VideoCapture] = None
@@ -351,7 +352,12 @@ class CameraStreamSlot:
             self.is_physical_open = False
             return False
         try:
-            cap = _open_camera_with_fallback(self.device_index, width=self.width, height=self.height, fps=20)
+            cap = _open_camera_with_fallback(
+                self.device_index,
+                width=self.width,
+                height=self.height,
+                fps=self.target_fps,
+            )
             if cap is None:
                 self.is_physical_open = False
                 return False
@@ -418,6 +424,7 @@ class CameraStreamSlot:
             "mode": "usb" if self.is_physical_open else "simulation",
             "is_physical_open": self.is_physical_open,
             "fps": self.fps,
+            "target_fps": self.target_fps,
             "resolution": f"{self.width}x{self.height}",
         }
 
@@ -534,6 +541,15 @@ class CameraManager:
             self.save_mapping()
             return self.slots[slot_id].get_status()
         return {}
+
+    def set_target_fps(self, target_fps: int) -> dict:
+        fps_val = max(10, min(60, int(target_fps)))
+        self.stop_all()
+        time.sleep(0.2)
+        for slot in self.slots.values():
+            slot.target_fps = fps_val
+        self.start_all()
+        return self.get_status()
 
     def add_simulated_dart(self, bx: float, by: float) -> None:
         with self._sim_lock:

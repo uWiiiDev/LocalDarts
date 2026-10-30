@@ -23,7 +23,7 @@ mkdir -p "${STAGE_DIR}/usr/share/applications"
 mkdir -p "${STAGE_DIR}/usr/share/icons/hicolor/scalable/apps"
 
 echo "[1/5] Kopiere Anwendungsdateien nach /opt/localdarts..."
-cp -r backend frontend run_app.py requirements.txt README.md "${STAGE_DIR}/opt/localdarts/"
+cp -r backend frontend run_app.py requirements.txt README.md HILFE_ANLEITUNG.md "${STAGE_DIR}/opt/localdarts/"
 find "${STAGE_DIR}/opt/localdarts" -name "__pycache__" -type d -exec rm -rf {} +
 
 echo "[2/5] Kopiere vorinstallierte Python-Bibliotheken (OpenCV, FastAPI, NumPy, Uvicorn)..."

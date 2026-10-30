@@ -159,6 +159,10 @@ class AssignCameraRequest(BaseModel):
     device_index: int
 
 
+class SetCameraFpsRequest(BaseModel):
+    target_fps: int = 25
+
+
 class SaveCalibrationRequest(BaseModel):
     cam_id: int
     preset_id: str = "autodarts_wires_ccw"
@@ -307,6 +311,14 @@ async def api_assign_camera(req: AssignCameraRequest):
 @app.post("/api/cameras/rescan")
 async def api_rescan_cameras():
     status = camera_manager.rescan_and_auto_assign()
+    detector.capture_empty_reference()
+    await ws_manager.broadcast({"event": "cameras_update", "cameras": status})
+    return status
+
+
+@app.post("/api/cameras/fps")
+async def api_set_camera_fps(req: SetCameraFpsRequest):
+    status = camera_manager.set_target_fps(req.target_fps)
     detector.capture_empty_reference()
     await ws_manager.broadcast({"event": "cameras_update", "cameras": status})
     return status

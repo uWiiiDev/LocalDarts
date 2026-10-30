@@ -7,7 +7,7 @@ cd "$(dirname "$0")"
 echo "🔄 [1/3] Aktualisiere Windows-Offline-Paket (dist/LocalDarts-Windows-Full-Offline.zip)..."
 if [ -d "dist/LocalDarts-Windows/python_embed" ]; then
   # Schnelles Update der Anwendungsdateien ohne erneuten Download von Python & Wheels
-  cp -r backend frontend run_app.py requirements.txt start_windows.bat installer_windows.iss README.md dist/LocalDarts-Windows/
+  cp -r backend frontend run_app.py requirements.txt start_windows.bat installer_windows.iss README.md HILFE_ANLEITUNG.md dist/LocalDarts-Windows/
   python3 -c "import shutil; shutil.make_archive('dist/LocalDarts-Windows-Full-Offline', 'zip', 'dist', 'LocalDarts-Windows')"
 else
   ./build_windows_bundle_on_linux.sh

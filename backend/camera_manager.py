@@ -7,13 +7,21 @@ from __future__ import annotations
 import glob
 import json
 import math
+import os
 from pathlib import Path
 import sys
 import threading
 import time
 from typing import Dict, List, Optional, Tuple
+
+os.environ.setdefault("OPENCV_LOG_LEVEL", "OFF")
 import cv2
 import numpy as np
+
+try:
+    cv2.setLogLevel(0)
+except Exception:
+    pass
 
 from .board_geometry import (
     CALIBRATION_PRESETS,
@@ -33,27 +41,53 @@ CAMERA_CONFIG_FILE = CONFIG_DIR / "cameras.json"
 IS_WINDOWS = sys.platform.startswith("win")
 
 
-def _preferred_cv_backend() -> int:
-    return cv2.CAP_DSHOW if IS_WINDOWS else cv2.CAP_V4L2
-
-
-def discover_video_devices() -> List[dict]:
+def _open_camera_with_fallback(device_index: int) -> Optional[cv2.VideoCapture]:
     """
-    Scan video devices on Linux (/dev/video*) or Windows (DirectShow indices 0..5).
+    Open a physical camera by index using the best platform backend with automatic fallback.
+    On Windows: tries DirectShow (CAP_DSHOW), then Media Foundation (CAP_MSMF), then CAP_ANY.
+    On Linux: tries V4L2 (CAP_V4L2), then CAP_ANY.
+    """
+    backends = (
+        [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_ANY]
+        if IS_WINDOWS
+        else [cv2.CAP_V4L2, cv2.CAP_ANY]
+    )
+    for backend in backends:
+        try:
+            cap = cv2.VideoCapture(device_index, backend)
+            if cap is not None and cap.isOpened():
+                return cap
+            if cap is not None:
+                cap.release()
+        except Exception:
+            pass
+    return None
+
+
+def discover_video_devices(probe_windows: bool = False) -> List[dict]:
+    """
+    Discover available video devices.
+    On Linux: reads /sys/class/video4linux/ without locking active streams.
+    On Windows: provides USB camera slots 0..3 (and optionally probes at startup).
     """
     devices = []
     if IS_WINDOWS:
-        for idx in range(6):
-            cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
-            if cap.isOpened():
-                devices.append(
-                    {
-                        "index": idx,
-                        "path": f"CAM:{idx}",
-                        "name": f"USB-Kamera #{idx} (Windows DirectShow)",
-                    }
-                )
-            cap.release()
+        for idx in range(4):
+            status_suffix = ""
+            if probe_windows:
+                cap = _open_camera_with_fallback(idx)
+                if cap is not None:
+                    ok, frame = cap.read()
+                    cap.release()
+                    if ok and frame is not None:
+                        status_suffix = " [Angeschlossen ✓]"
+            devices.append(
+                {
+                    "index": idx,
+                    "path": f"CAM:{idx}",
+                    "name": f"USB-Kamera #{idx}{status_suffix}",
+                }
+            )
         return devices
 
     paths = sorted(glob.glob("/dev/video*"))
@@ -93,10 +127,8 @@ class SyntheticBoardRenderer:
         center = (size // 2, size // 2)
         scale = size / 2.4
 
-        # Outer surround
         cv2.circle(img, center, int(round(1.16 * scale)), (22, 22, 25), -1, cv2.LINE_AA)
 
-        # Draw 20 sectors
         for i, num in enumerate(SECTORS_CLOCKWISE):
             start_ang = i * 18.0 - 9.0 - 90.0
             end_ang = start_ang + 18.0
@@ -104,36 +136,30 @@ class SyntheticBoardRenderer:
             single_col = (26, 28, 30) if is_dark else (195, 212, 225)
             ring_col = (35, 35, 210) if is_dark else (45, 145, 35)
 
-            # Double ring
             cv2.ellipse(
                 img, center,
                 (int(round(R_DOUBLE_OUTER * scale)), int(round(R_DOUBLE_OUTER * scale))),
                 0, start_ang, end_ang, ring_col, -1, cv2.LINE_AA
             )
-            # Outer single
             cv2.ellipse(
                 img, center,
                 (int(round(R_DOUBLE_INNER * scale)), int(round(R_DOUBLE_INNER * scale))),
                 0, start_ang, end_ang, single_col, -1, cv2.LINE_AA
             )
-            # Triple ring
             cv2.ellipse(
                 img, center,
                 (int(round(R_TRIPLE_OUTER * scale)), int(round(R_TRIPLE_OUTER * scale))),
                 0, start_ang, end_ang, ring_col, -1, cv2.LINE_AA
             )
-            # Inner single
             cv2.ellipse(
                 img, center,
                 (int(round(R_TRIPLE_INNER * scale)), int(round(R_TRIPLE_INNER * scale))),
                 0, start_ang, end_ang, single_col, -1, cv2.LINE_AA
             )
 
-        # Outer & Inner Bull
         cv2.circle(img, center, int(round(R_OUTER_BULL * scale)), (45, 145, 35), -1, cv2.LINE_AA)
         cv2.circle(img, center, int(round(R_INNER_BULL * scale)), (35, 35, 210), -1, cv2.LINE_AA)
 
-        # Spider wires
         for r_norm in [R_INNER_BULL, R_OUTER_BULL, R_TRIPLE_INNER, R_TRIPLE_OUTER, R_DOUBLE_INNER, R_DOUBLE_OUTER]:
             cv2.circle(img, center, int(round(r_norm * scale)), (190, 195, 200), 1, cv2.LINE_AA)
 
@@ -145,7 +171,6 @@ class SyntheticBoardRenderer:
             p2 = (int(round(center[0] + x2 * scale)), int(round(center[1] + y2 * scale)))
             cv2.line(img, p1, p2, (190, 195, 200), 1, cv2.LINE_AA)
 
-        # Numbers on wire ring
         for i, num in enumerate(SECTORS_CLOCKWISE):
             ang = i * 18.0
             nx, ny = polar_to_board_xy(1.08, ang)
@@ -190,15 +215,9 @@ class SyntheticBoardRenderer:
         cam_id: int,
         simulated_darts: List[Tuple[float, float]],
     ) -> np.ndarray:
-        """
-        Render a camera frame for cam_id with any active simulated darts drawn
-        so that their tip touches the exact board coordinate (bx, by) and their
-        shaft/flight extends outward according to the camera perspective.
-        """
         bg, H_board_to_cam = self._warped_backgrounds.get(cam_id, self._warped_backgrounds[0])
         frame = bg.copy()
 
-        # Camera viewing angle influences direction of protruding dart barrel in 2D projection
         cam_mounting_angles = {0: -35.0, 1: 85.0, 2: 205.0}
         angle_rad = math.radians(cam_mounting_angles.get(cam_id, -35.0))
         dx_tail = math.sin(angle_rad) * 58.0
@@ -212,7 +231,6 @@ class SyntheticBoardRenderer:
             tail_x = int(round(tx + dx_tail))
             tail_y = int(round(ty + dy_tail))
 
-            # Draw dart shadow, metallic barrel, shaft, and bright flight
             cv2.line(frame, (tx, ty), (tail_x, tail_y), (235, 240, 245), 4, cv2.LINE_AA)
             cv2.line(
                 frame,
@@ -222,7 +240,6 @@ class SyntheticBoardRenderer:
                 6,
                 cv2.LINE_AA,
             )
-            # Flight polygon at tail
             perp_x = -dy_tail * 0.22
             perp_y = dx_tail * 0.22
             flight_pts = np.array(
@@ -244,7 +261,7 @@ class CameraStreamSlot:
 
     def __init__(self, slot_id: int, device_index: Optional[int], renderer: SyntheticBoardRenderer):
         self.slot_id = slot_id
-        self.device_index: Optional[int] = device_index  # None or -1 means synthetic simulator
+        self.device_index: Optional[int] = device_index
         self.renderer = renderer
         self.width = 640
         self.height = 480
@@ -278,22 +295,32 @@ class CameraStreamSlot:
             self.is_physical_open = False
             return False
         try:
-            cap = cv2.VideoCapture(self.device_index, _preferred_cv_backend())
-            if not cap.isOpened():
-                cap = cv2.VideoCapture(self.device_index)
-            if not cap.isOpened():
+            cap = _open_camera_with_fallback(self.device_index)
+            if cap is None:
                 self.is_physical_open = False
                 return False
-            # Set MJPG to save USB 2.0 bandwidth when running 3 cameras simultaneously
+
             cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
             cap.set(cv2.CAP_PROP_FPS, 30)
+
             ok, frame = cap.read()
             if not ok or frame is None:
+                # Retry without forcing MJPG in case a Windows webcam driver only supports YUY2/RGB
                 cap.release()
-                self.is_physical_open = False
-                return False
+                cap = _open_camera_with_fallback(self.device_index)
+                if cap is None:
+                    self.is_physical_open = False
+                    return False
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+                ok, frame = cap.read()
+                if not ok or frame is None:
+                    cap.release()
+                    self.is_physical_open = False
+                    return False
+
             with self._lock:
                 self._latest_frame = frame
             self._cap = cap
@@ -327,7 +354,6 @@ class CameraStreamSlot:
                 else:
                     time.sleep(0.05)
             else:
-                # Synthetic mode frame pacing (~25 FPS)
                 time.sleep(0.04)
                 frames_count += 1
 
@@ -364,10 +390,9 @@ class CameraManager:
         self.simulated_darts: List[Tuple[float, float]] = []
         self._sim_lock = threading.Lock()
 
-        # Auto-assign discovered cameras or simulation fallback
         saved_map = self._load_saved_mapping()
-        discovered = discover_video_devices()
-        usable_indices = self._probe_usable_devices(discovered)
+        self._cached_devices = discover_video_devices(probe_windows=True)
+        usable_indices = self._probe_usable_devices(self._cached_devices)
 
         self.slots: Dict[int, CameraStreamSlot] = {}
         for slot_id in range(num_slots):
@@ -376,24 +401,23 @@ class CameraManager:
             elif slot_id < len(usable_indices):
                 dev_idx = usable_indices[slot_id]
             else:
-                dev_idx = -1  # Simulation fallback
+                dev_idx = -1
             slot = CameraStreamSlot(slot_id=slot_id, device_index=dev_idx, renderer=self.renderer)
             self.slots[slot_id] = slot
 
     @staticmethod
     def _probe_usable_devices(discovered: List[dict]) -> List[int]:
+        if IS_WINDOWS:
+            return [d["index"] for d in discovered if "[Angeschlossen" in d.get("name", "")]
         usable = []
         for dev in discovered:
             idx = dev["index"]
-            try:
-                cap = cv2.VideoCapture(idx, _preferred_cv_backend())
-                if cap.isOpened():
-                    ok, frame = cap.read()
-                    if ok and frame is not None:
-                        usable.append(idx)
+            cap = _open_camera_with_fallback(idx)
+            if cap is not None:
+                ok, frame = cap.read()
                 cap.release()
-            except Exception:
-                pass
+                if ok and frame is not None:
+                    usable.append(idx)
         return usable
 
     def _load_saved_mapping(self) -> Dict[int, int]:
@@ -452,8 +476,10 @@ class CameraManager:
         return {sid: slot.get_frame(sim_darts) for sid, slot in self.slots.items()}
 
     def get_status(self) -> dict:
+        if not IS_WINDOWS:
+            self._cached_devices = discover_video_devices(probe_windows=False)
         return {
-            "available_devices": discover_video_devices(),
+            "available_devices": self._cached_devices,
             "slots": {sid: slot.get_status() for sid, slot in self.slots.items()},
             "simulated_darts_count": len(self.simulated_darts),
         }

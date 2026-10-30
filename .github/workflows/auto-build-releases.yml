@@ -1,0 +1,47 @@
+name: Auto-Update Windows & Linux Release Packages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-update-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Create Linux .venv and install dependencies
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -r requirements.txt
+
+      - name: Build Windows Full Offline ZIP (with embedded Python)
+        run: |
+          chmod +x build_windows_bundle_on_linux.sh
+          ./build_windows_bundle_on_linux.sh
+
+      - name: Build Debian/Ubuntu .deb package
+        run: |
+          chmod +x build_deb.sh
+          ./build_deb.sh
+
+      - name: Upload updated packages to Release v1.0.0
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload v1.0.0 \
+            dist/LocalDarts-Windows-Full-Offline.zip \
+            dist/localdarts_1.0.0_amd64.deb \
+            --clobber
